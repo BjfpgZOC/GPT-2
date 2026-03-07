@@ -9,6 +9,7 @@ from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 import torch.distributed as dist
+import wandb
 
 from gpt2 import GPT, GPTConfig
 from data.hellaswag import iterate_examples, render_example
@@ -114,7 +115,7 @@ warmup_steps = 715
 max_steps = 19073
 
 total_batch_size = 524288
-B = 32
+B = 16
 T = 1024
 assert total_batch_size % (B * T * ddp_world_size) == 0, "Ensure total_batch_size is divisble by B * T * ddp_world_size"
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
@@ -167,6 +168,36 @@ def get_most_likely_row(tokens, mask, logits):
     pred_norm = avg_loss.argmin().item()
     return pred_norm
 
+# ------------------------------------ WANDB LOGGING ------------------------------------
+
+use_wandb = True
+if master_process and use_wandb:
+    wandb_run = wandb.init(
+        entity = "seyal99",
+        project = "GPT-2",
+        name = "gpt2-pretrain",
+        config = {
+            "max_lr": max_lr,
+            "min_lr": min_lr,
+            "warmup_steps": warmup_steps,
+            "max_steps": max_steps,
+            "total_batch_size": total_batch_size,
+            "micro_batch_size": B,
+            "seq_len": T,
+            "grad_accum_steps": grad_accum_steps,
+            "vocab_size": 50304,
+            "weight_decay": 0.1,
+        }
+    )
+
+    wandb_run.define_metric("trainer_step")
+    wandb_run.define_metric("train_loss", step_metric = "trainer_step")
+    wandb_run.define_metric("val_loss", step_metric = "trainer_step")
+    wandb_run.define_metric("hellaSwag_acc", step_metric = "trainer_step")
+    wandb_run.define_metric("lr", step_metric = "trainer_step")
+    wandb_run.define_metric("grad_norm", step_metric = "trainer_step")
+    wandb_run.define_metric("tokens_per_second", step_metric = "trainer_step")
+
 # ------------------------------------ TRAINING LOOP ------------------------------------
 
 for step in range(max_steps):
@@ -198,10 +229,17 @@ for step in range(max_steps):
             with open(log_file, "a") as f:
                 f.write(f"{step} val loss: {val_loss_accum.item():.4f}\n")
 
+            if use_wandb:
+                wandb_run.log({
+                    "trainer_step": step,
+                    "val_loss": val_loss_accum.item()
+                })
+
             if (step > 0 and step % 4000 == 0) or last_step:
                 ckpt_path = os.path.join(log_dir, f"gpt2_{step:05d}.pt")
                 ckpt = {
                     "model": raw_model.state_dict(),
+                    "config": raw_model.config,
                     "step": step,       
                 }
                 torch.save(ckpt, ckpt_path)
@@ -238,6 +276,13 @@ for step in range(max_steps):
             print(f"HellaSwag Accuracy: {num_correct_norm}/{num_total}={acc_norm:.4f}")
             with open(log_file, "a") as f:
                 f.write(f"{step} hella acc: {acc_norm:.4f}\n")
+
+            if use_wandb:
+                wandb_run.log({
+                    "trainer_step": step,
+                    "hellaSwag_acc": acc_norm
+                })
+
 
     model.train()
     optimizer.zero_grad()
@@ -279,6 +324,22 @@ for step in range(max_steps):
         print(f"Step {step:4d}, loss: {loss_accum.item():.6f}, lr: {lr:.4e}, norm: {norm:.4f}, dt: {dt*1000:.2f} ms, tok/sec: {tokens_per_second:.2f}")
         with open(log_file, "a") as f:
             f.write(f"{step} train loss: {loss_accum.item():.4f}\n")
+
+        if use_wandb:
+            wandb_run.log({
+                "trainer_step": step,
+                "train_loss": loss_accum.item()
+            })
+
+            wandb_run.log({
+                "trainer_step": step,
+                "lr": lr,
+                "grad_norm": norm,
+                "tokens_per_second": tokens_per_second,
+            })
+          
+if master_process and use_wandb:
+    wandb_run.finish()
 
 if ddp:
     destroy_process_group()
