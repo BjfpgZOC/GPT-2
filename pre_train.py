@@ -293,14 +293,14 @@ for step in range(max_steps):
         x = x.to(device)
         y = y.to(device)
 
+        if ddp: 
+            model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         with torch.autocast(device_type = device_type, dtype = torch.bfloat16):
             logits, loss = model(x, y)
         
         loss = loss / grad_accum_steps
         loss_accum += loss.detach()
 
-        if ddp: 
-            model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         loss.backward()
 
     if ddp:
