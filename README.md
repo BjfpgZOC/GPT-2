@@ -14,12 +14,9 @@ The project is inspired by Andrej Karpathy's [nanoGPT](https://github.com/karpat
 
 ## Results
 
-### Train Loss
-
 <p align="center">
-  <img src="images/train_loss.png" alt="Train Loss" width="32%" />
-  <img src="images/val_loss.png" alt="Validation Loss" width="32%" />
-  <img src="images/hellaswag.png" alt="HellaSwag Accuracy" width="32%" />
+  <img src="images/loss.png" alt="Loss" width="49%" />
+  <img src="images/hellaswag.png" alt="HellaSwag Accuracy" width="49%" />
 </p>
 
 ## Implementation Details
